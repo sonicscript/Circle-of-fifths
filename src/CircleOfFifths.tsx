@@ -2,10 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 
 /* ============================================================
-   Circle of Fifths — D♯ Fix + Simplified UI
-   - Robust enharmonic toggle (Auto / ♯ / ♭)
-   - D♯/E♭ audio + spelling corrected (harmonic minor)
-   - Removed Dark Mode, Dominant/Subdominant tiles
+   Circle of Fifths — Vercel-safe build (chords fix)
+   - Enharmonic toggle (Auto / ♯ / ♭) controls labels + sound
+   - Robust D♯/E♭ & C♯/D♭ handling (scale + audio)
+   - Harmonic minor for minor mode
+   - Clean light UI; no dominant/subdominant tiles; no dark mode
    - 7ths toggle; slice click plays tonic chord
    ============================================================ */
 
@@ -16,7 +17,7 @@ const OUTER_R = 200;
 const INNER_R = 120;
 
 // ---------- Circle data ------------------------------------------------------
-type Pos = { major: string; minor: string; acc: number }; // acc>0 sharps, acc<0 flats, magnitude=count
+type Pos = { major: string; minor: string; acc: number }; // acc>0 sharps; acc<0 flats
 
 const POSITIONS: readonly Pos[] = [
   { major: "C",         minor: "a",        acc:  0 },
@@ -25,15 +26,15 @@ const POSITIONS: readonly Pos[] = [
   { major: "A",         minor: "f#",       acc:  3 },
   { major: "E",         minor: "c#",       acc:  4 },
   { major: "B",         minor: "g#",       acc:  5 },
-  { major: "F# / Gb",   minor: "d# / eb",  acc:  6 }, // enharmonic spoke
-  { major: "Db / C#",   minor: "bb / a#",  acc: -5 }, // enharmonic spoke
+  { major: "F# / Gb",   minor: "d# / eb",  acc:  6 },  // enharmonic spoke
+  { major: "Db / C#",   minor: "bb / a#",  acc: -5 },  // enharmonic spoke
   { major: "Ab",        minor: "f",        acc: -4 },
   { major: "Eb",        minor: "c",        acc: -3 },
   { major: "Bb",        minor: "g",        acc: -2 },
   { major: "F",         minor: "d",        acc: -1 },
 ] as const;
 
-// ---------- Accidentals / letter PCs ----------------------------------------
+// ---------- Accidentals / letter pitch-classes ------------------------------
 const ORDER_SHARPS = ["F","C","G","D","A","E","B"];
 const ORDER_FLATS  = ["B","E","A","D","G","C","F"];
 const NAT_PC: Record<string, number> = { C:0, D:2, E:4, F:5, G:7, A:9, B:11 };
@@ -44,7 +45,7 @@ const MAJOR_SIG_COUNTS: Record<string, number> = {
   F: -1, Bb: -2, Eb: -3, Ab: -4, Db: -5, Gb: -6, Cb: -7,
 };
 
-// Relative major for (canonical) minor names
+// Relative major for minor names (lowercase)
 const MINOR_REL_MAJOR: Record<string, string> = {
   a:"C", e:"G", b:"D", "f#":"A", "c#":"E", "g#":"B", "d#":"F#", "a#":"C#",
   d:"F", g:"Bb", c:"Eb", f:"Ab", bb:"Db", eb:"Gb", ab:"Cb",
@@ -58,15 +59,12 @@ function normalizeToken(n: string) {
   if (!n) return "C";
   let t = asciiNote(n);
   t = t.split("/")[0].trim();
-  t = t.replace(/\s+/g, "");
   const L = t[0]?.toUpperCase() ?? "C";
   const rest = t.slice(1).replace(/[^#b]/g, "");
   return L + rest;
 }
 function normalizeMinorToken(n: string) {
-  let t = asciiNote(n).trim();
-  t = t.split("/")[0].trim();
-  t = t.replace(/\s+/g, "");
+  let t = asciiNote(n).split("/")[0].trim();
   const L = t[0]?.toLowerCase() ?? "a";
   const rest = t.slice(1).replace(/[^#b]/g, "");
   return L + rest;
@@ -78,27 +76,18 @@ function pretty(n: string) {
 // ---------- Enharmonic preference -------------------------------------------
 type EnhPref = "auto" | "sharps" | "flats";
 
-/** Pick sharp/flat option by actual accidental, not by slash order. */
+/** Robustly choose sharp/flat token by accidental, not by slash position. */
 function resolveEnharmonic(raw: string, posAcc: number, pref: EnhPref) {
   if (!raw.includes("/")) return raw;
   const [aRaw, bRaw] = raw.split("/").map(s => s.trim());
   const a = asciiNote(aRaw), b = asciiNote(bRaw);
-  const tokenType = (x: string) => (/#/.test(x) ? "sharp" : /(^[A-Ga-g]b|bb)/.test(x) ? "flat" : "natural");
-  const aT = tokenType(a), bT = tokenType(b);
-
-  let sharpName = aRaw, flatName = bRaw;
-  if (aT === "sharp" && bT === "flat") { sharpName = aRaw; flatName = bRaw; }
-  else if (aT === "flat" && bT === "sharp") { sharpName = bRaw; flatName = aRaw; }
-  else {
-    // Fallback (rare): prefer token containing '#' for sharp, 'b' for flat
-    sharpName = a.includes("#") ? aRaw : bRaw;
-    flatName  = /(^[A-Ga-g]b|bb)/.test(a) ? aRaw : bRaw;
-  }
+  const aSharp = a.includes("#"), bSharp = b.includes("#");
+  const sharpName = aSharp ? aRaw : bRaw;
+  const flatName  = aSharp ? bRaw : aRaw;
 
   if (pref === "sharps") return sharpName;
   if (pref === "flats")  return flatName;
-  // auto: by side
-  return posAcc >= 0 ? sharpName : flatName;
+  return posAcc >= 0 ? sharpName : flatName; // auto by circle side
 }
 
 // ---------- Signatures & scale building -------------------------------------
@@ -120,8 +109,8 @@ function applySignature(letter: string, sig: Sig) {
 function raiseHalfStep(spelled: string) {
   const L = spelled[0];
   const acc = spelled.slice(1);
-  if (acc.includes("b")) return L + acc.replace("b", "");
-  return L + acc + "#";
+  if (acc.includes("b")) return L + acc.replace("b", ""); // remove one flat
+  return L + acc + "#";                                    // add one sharp
 }
 
 function relativeMajorFromMinor(minorName: string, pref: EnhPref) {
@@ -132,30 +121,29 @@ function relativeMajorFromMinor(minorName: string, pref: EnhPref) {
   return MINOR_REL_MAJOR[nm] ?? "C";
 }
 
-/** Build scale by key name + mode using formal signatures.
- *  Minor (harmonic) = relative-major signature + raised 7th.
+/** Build scale by key name + mode using formal key signatures.
+ *  Minor (harmonic): relative-major signature + raised 7th.
  */
 function buildScaleFromKeyName(tonicRaw: string, mode: "major"|"minor", enhPref: EnhPref) {
   const LETTERS = ["C","D","E","F","G","A","B"];
   if (mode === "major") {
     const tonic = normalizeToken(tonicRaw);
-    const tonicLetter = tonic[0];
     const sig = signatureForMajorName(tonic);
-    const start = LETTERS.indexOf(tonicLetter);
+    const start = LETTERS.indexOf(tonic[0]);
     const letters = Array.from({length:7},(_,i)=>LETTERS[(start+i)%7]);
     const scale = letters.map(L => applySignature(L, sig));
-    scale[0] = tonic;
+    scale[0] = tonic; // ensure tonic accidental matches name
     return scale;
   } else {
-    const tonic = normalizeMinorToken(tonicRaw);        // e.g., "d#"
-    const tonicLetter = tonic[0].toUpperCase();         // "D"
-    const relMaj = relativeMajorFromMinor(tonicRaw, enhPref); // e.g., "F#"
+    const tonic = normalizeMinorToken(tonicRaw);         // e.g., "d#"
+    const tonicLetter = tonic[0].toUpperCase();          // "D"
+    const relMaj = relativeMajorFromMinor(tonicRaw, enhPref);
     const sig = signatureForMajorName(relMaj);
     const start = LETTERS.indexOf(tonicLetter);
     const letters = Array.from({length:7},(_,i)=>LETTERS[(start+i)%7]);
     const scale = letters.map(L => applySignature(L, sig));
-    scale[0] = tonicLetter + tonic.slice(1);            // ensure tonic accidental matches name
-    scale[6] = raiseHalfStep(scale[6]);                 // harmonic minor leading tone
+    scale[0] = tonicLetter + tonic.slice(1);             // keep minor tonic’s accidental
+    scale[6] = raiseHalfStep(scale[6]);                  // harmonic minor leading tone
     return scale;
   }
 }
@@ -197,13 +185,13 @@ function useAudio() {
 
   const ensure = () => {
     if (!ctxRef.current) {
-      const Ctx = (window.AudioContext || (window as any).webkitAudioContext);
-      const ctx = new Ctx();
-      const g = ctx.createGain();
+      const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as AudioContext;
+      const ctx = new (Ctx as any)();
+      const g = (ctx as any).createGain();
       g.gain.value = volume;
-      g.connect(ctx.destination);
-      ctxRef.current = ctx;
-      gainRef.current = g;
+      g.connect((ctx as any).destination);
+      ctxRef.current = ctx as unknown as AudioContext;
+      gainRef.current = g as unknown as GainNode;
     }
   };
   const resumeIfNeeded = async () => {
@@ -215,7 +203,7 @@ function useAudio() {
 
   const midiToFreq = (m:number)=> 440*Math.pow(2,(m-69)/12);
   const spelledToMidi = (note:string, oct=4) => {
-    const N = asciiNote(normalizeToken(note)); // ensure ## / bb are counted
+    const N = asciiNote(normalizeToken(note));
     const L = N[0] as keyof typeof NAT_PC;
     const acc = N.slice(1);
     const sigma = (acc.match(/#/g)?.length ?? 0) - (acc.match(/b/g)?.length ?? 0);
@@ -223,19 +211,6 @@ function useAudio() {
     return 12*(oct+1) + pc;
   };
   const noteToFreq = (n:string,o=4)=> midiToFreq(spelledToMidi(n,o));
-
-  const playFreq = async (f:number, dur=0.45) => {
-    await resumeIfNeeded();
-    const ctx = ctxRef.current!, bus = gainRef.current!;
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.type="sine"; o.frequency.setValueAtTime(f, ctx.currentTime);
-    o.connect(g).connect(bus);
-    const t = ctx.currentTime;
-    g.gain.setValueAtTime(0.0001,t);
-    g.gain.exponentialRampToValueAtTime(0.32,t+0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
-    o.start(t); o.stop(t+dur+0.02);
-  };
 
   const playChord = async (freqs:number[], dur=0.8) => {
     await resumeIfNeeded();
@@ -251,7 +226,20 @@ function useAudio() {
     });
   };
 
-  return { playFreq, playChord, noteToFreq, volume, setVolume, muted, setMuted };
+  const playFreq = async (f:number, dur=0.45) => {
+    await resumeIfNeeded();
+    const ctx = ctxRef.current!, bus = gainRef.current!;
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type="sine"; o.frequency.setValueAtTime(f, ctx.currentTime);
+    o.connect(g).connect(bus);
+    const t = ctx.currentTime;
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(0.32,t+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    o.start(t); o.stop(t+dur+0.02);
+  };
+
+  return { playChord, playFreq, noteToFreq, volume, setVolume, muted, setMuted };
 }
 
 // ---------- Drawing utils ----------------------------------------------------
@@ -296,31 +284,28 @@ export default function CircleOfFifths() {
   const [mode, setMode] = useState<"major" | "minor">("major");
   const [showRel, setShowRel] = useState(true);
   const [useSevenths, setUseSevenths] = useState(true);
-  const [enhPref, setEnhPref] = useState<EnhPref>("auto"); // Auto / ♯ / ♭
+  const [enhPref, setEnhPref] = useState<EnhPref>("auto");
   const [idx, setIdx] = useState(0);
 
   const { playFreq, playChord, noteToFreq, volume, setVolume, muted, setMuted } = useAudio();
   const pos = POSITIONS[idx];
 
-  // Labels follow enhPref on enharmonic spokes
   const labelFor = (raw: string, p: Pos) => pretty(normalizeToken(resolveEnharmonic(raw, p.acc, enhPref)));
   const displayMain = (p: Pos) => labelFor(mode === "major" ? p.major : p.minor, p);
   const displayRel  = (p: Pos) => labelFor(mode === "major" ? p.minor : p.major, p);
 
-  // Tonic for spelling/sound
   const tonicNameForSpelling = useMemo(() => {
     const raw = mode === "major" ? pos.major : pos.minor;
     return resolveEnharmonic(raw, pos.acc, enhPref);
   }, [pos, mode, enhPref]);
 
-  // Scales & chords
   const spelledScale = useMemo(
     () => buildScaleFromKeyName(tonicNameForSpelling, mode, enhPref),
     [tonicNameForSpelling, mode, enhPref]
   );
   const triads = useMemo(() => diatonicTriads(spelledScale, mode), [spelledScale, mode]);
   const sevenths = useMemo(() => diatonicSevenths(spelledScale, mode), [spelledScale, mode]);
-  const chords = useSevenths ? sevenths : triads;
+  const chords = useSevenths ? sevenths : triads; // ✅ used below
 
   const selectedPretty = displayMain(pos);
   const relativePretty = displayRel(pos);
@@ -350,7 +335,7 @@ export default function CircleOfFifths() {
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 rounded-2xl bg-gradient-to-br from-indigo-500 to-fuchsia-500 shadow-md" />
-            <strong className="text-sm md:text-base">Circle of Fifths — Studio</strong>
+            <strong className="text-sm md:text-base">Circle of Fifths</strong>
           </div>
           <div className="hidden sm:flex items-center gap-2">
             <Seg active={mode==="major"} onClick={()=>setMode("major")}>Major</Seg>
@@ -400,8 +385,8 @@ export default function CircleOfFifths() {
         {/* Circle */}
         <section aria-label="Circle of Fifths" className="rounded-2xl bg-white/90 p-4 border border-slate-200 shadow-sm">
           <motion.svg
-            initial={prefersReducedMotion?undefined:{ opacity: 0, scale: 0.98 }}
-            animate={prefersReducedMotion?undefined:{ opacity: 1, scale: 1 }}
+            initial={useReducedMotion()?undefined:{ opacity: 0, scale: 0.98 }}
+            animate={useReducedMotion()?undefined:{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.3, ease: "easeOut" }}
             width={CENTER*2}
             height={CENTER*2}
@@ -432,7 +417,7 @@ export default function CircleOfFifths() {
                   tabIndex={0}
                   aria-label={`Select ${mainLabel}`}
                   className="cursor-pointer focus:outline-none"
-                  whileHover={{ scale: prefersReducedMotion ? 1 : 1.012 }}
+                  whileHover={{ scale: useReducedMotion()?1:1.012 }}
                   onClick={()=>{
                     setIdx(i);
                     const local = buildScaleFromKeyName(resolvedTonicRaw, mode, enhPref);
@@ -448,8 +433,8 @@ export default function CircleOfFifths() {
                     }
                   }}
                   onMouseEnter={()=>{
-                    // Hover cue on tonic (note: some browsers need a click first to unlock audio)
                     const tonic = normalizeToken(resolvedTonicRaw);
+                    // Some browsers need a click first to unlock audio
                     playFreq(noteToFreq(tonic,4));
                   }}
                 >
@@ -486,7 +471,7 @@ export default function CircleOfFifths() {
 
         {/* Info + Chords */}
         <section className="grid gap-6">
-          {/* Overview (no dominant/subdominant rows) */}
+          {/* Overview */}
           <div className="rounded-2xl bg-white/90 border border-slate-200 p-4 md:p-5">
             <h2 className="text-base md:text-lg font-semibold mb-3">{selectedPretty} overview</h2>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -494,7 +479,6 @@ export default function CircleOfFifths() {
               <InfoTile label={mode==="major"?"Relative minor":"Relative major"} value={relativePretty} />
               <InfoTile label="Accidentals" value={
                 (() => {
-                  // human-readable signature (e.g., F♯ C♯ G♯ …)
                   const tonic = normalizeToken(tonicNameForSpelling);
                   const sig = mode==="major"
                     ? signatureForMajorName(tonic)
@@ -507,7 +491,7 @@ export default function CircleOfFifths() {
             </div>
           </div>
 
-          {/* Chord palette with 7ths toggle */}
+          {/* Chord palette */}
           <div className="rounded-2xl bg-white/90 border border-slate-200 p-4 md:p-5">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-base md:text-lg font-semibold">Diatonic {useSevenths ? "7th chords" : "triads"}</h3>
@@ -518,7 +502,7 @@ export default function CircleOfFifths() {
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-              {(useSevenths ? sevenths : triads).map((c,i)=>(
+              {chords.map((c,i)=>(
                 <motion.button
                   key={i}
                   whileHover={{ y: -3 }}
