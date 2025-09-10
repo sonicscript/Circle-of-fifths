@@ -1,13 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { motion, useReducedMotion } from "framer-motion";
+import { motion } from "framer-motion";
 
 /* ============================================================
-   Circle of Fifths — Vercel-safe build (chords fix)
-   - Enharmonic toggle (Auto / ♯ / ♭) controls labels + sound
-   - Robust D♯/E♭ & C♯/D♭ handling (scale + audio)
-   - Harmonic minor for minor mode
-   - Clean light UI; no dominant/subdominant tiles; no dark mode
-   - 7ths toggle; slice click plays tonic chord
+   Circle of Fifths — Vercel-safe build (TS fixes)
+   - Removes unused vars (bSharp, prefersReducedMotion)
+   - Safer AudioContext init for TypeScript
+   - All previous features preserved
    ============================================================ */
 
 // ---------- Geometry ---------------------------------------------------------
@@ -81,7 +79,7 @@ function resolveEnharmonic(raw: string, posAcc: number, pref: EnhPref) {
   if (!raw.includes("/")) return raw;
   const [aRaw, bRaw] = raw.split("/").map(s => s.trim());
   const a = asciiNote(aRaw), b = asciiNote(bRaw);
-  const aSharp = a.includes("#"), bSharp = b.includes("#");
+  const aSharp = a.includes("#");
   const sharpName = aSharp ? aRaw : bRaw;
   const flatName  = aSharp ? bRaw : aRaw;
 
@@ -185,13 +183,14 @@ function useAudio() {
 
   const ensure = () => {
     if (!ctxRef.current) {
-      const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as AudioContext;
-      const ctx = new (Ctx as any)();
-      const g = (ctx as any).createGain();
+      // Use a permissive 'any' to satisfy TS across browsers (AudioContext / webkitAudioContext)
+      const Ctor: any = (window as any).AudioContext ?? (window as any).webkitAudioContext;
+      const ctx: any = new Ctor();
+      const g: any = ctx.createGain();
       g.gain.value = volume;
-      g.connect((ctx as any).destination);
-      ctxRef.current = ctx as unknown as AudioContext;
-      gainRef.current = g as unknown as GainNode;
+      g.connect(ctx.destination);
+      ctxRef.current = ctx as AudioContext;
+      gainRef.current = g as GainNode;
     }
   };
   const resumeIfNeeded = async () => {
@@ -280,7 +279,6 @@ function InfoTile({ label, value }: { label: string; value: string }) {
 
 // ---------- Main component ---------------------------------------------------
 export default function CircleOfFifths() {
-  const prefersReducedMotion = useReducedMotion();
   const [mode, setMode] = useState<"major" | "minor">("major");
   const [showRel, setShowRel] = useState(true);
   const [useSevenths, setUseSevenths] = useState(true);
@@ -305,12 +303,12 @@ export default function CircleOfFifths() {
   );
   const triads = useMemo(() => diatonicTriads(spelledScale, mode), [spelledScale, mode]);
   const sevenths = useMemo(() => diatonicSevenths(spelledScale, mode), [spelledScale, mode]);
-  const chords = useSevenths ? sevenths : triads; // ✅ used below
+  const chords = useSevenths ? sevenths : triads;
 
   const selectedPretty = displayMain(pos);
   const relativePretty = displayRel(pos);
 
-  // Shortcuts
+  // Keyboard shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "ArrowRight") setIdx(i => (i+1)%12);
@@ -385,8 +383,8 @@ export default function CircleOfFifths() {
         {/* Circle */}
         <section aria-label="Circle of Fifths" className="rounded-2xl bg-white/90 p-4 border border-slate-200 shadow-sm">
           <motion.svg
-            initial={useReducedMotion()?undefined:{ opacity: 0, scale: 0.98 }}
-            animate={useReducedMotion()?undefined:{ opacity: 1, scale: 1 }}
+            initial={{ opacity: 0, scale: 0.98 }}
+            animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.3, ease: "easeOut" }}
             width={CENTER*2}
             height={CENTER*2}
@@ -417,7 +415,7 @@ export default function CircleOfFifths() {
                   tabIndex={0}
                   aria-label={`Select ${mainLabel}`}
                   className="cursor-pointer focus:outline-none"
-                  whileHover={{ scale: useReducedMotion()?1:1.012 }}
+                  whileHover={{ scale: 1.012 }}
                   onClick={()=>{
                     setIdx(i);
                     const local = buildScaleFromKeyName(resolvedTonicRaw, mode, enhPref);
