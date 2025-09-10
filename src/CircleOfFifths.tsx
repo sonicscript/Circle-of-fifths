@@ -3,9 +3,6 @@ import { motion } from "framer-motion";
 
 /* ============================================================
    Circle of Fifths — Vercel-safe build (TS fixes)
-   - Removes unused vars (bSharp, prefersReducedMotion)
-   - Safer AudioContext init for TypeScript
-   - All previous features preserved
    ============================================================ */
 
 // ---------- Geometry ---------------------------------------------------------
@@ -74,11 +71,11 @@ function pretty(n: string) {
 // ---------- Enharmonic preference -------------------------------------------
 type EnhPref = "auto" | "sharps" | "flats";
 
-/** Robustly choose sharp/flat token by accidental, not by slash position. */
+/** Choose sharp/flat token by accidental, not by slash position. */
 function resolveEnharmonic(raw: string, posAcc: number, pref: EnhPref) {
   if (!raw.includes("/")) return raw;
   const [aRaw, bRaw] = raw.split("/").map(s => s.trim());
-  const a = asciiNote(aRaw), b = asciiNote(bRaw);
+  const a = asciiNote(aRaw);
   const aSharp = a.includes("#");
   const sharpName = aSharp ? aRaw : bRaw;
   const flatName  = aSharp ? bRaw : aRaw;
@@ -432,7 +429,6 @@ export default function CircleOfFifths() {
                   }}
                   onMouseEnter={()=>{
                     const tonic = normalizeToken(resolvedTonicRaw);
-                    // Some browsers need a click first to unlock audio
                     playFreq(noteToFreq(tonic,4));
                   }}
                 >
